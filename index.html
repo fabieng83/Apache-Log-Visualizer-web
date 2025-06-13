@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pipeline Visualizer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1A1A2E;
+            font-family: 'Inter', sans-serif;
+            position: relative;
+        }
+        #particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            opacity: 0.3;
+            pointer-events: none;
+        }
+        #mainCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 70vw;
+            height: 100vh;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.2);
+            z-index: 1;
+        }
+        #infoCanvas {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 30vw;
+            height: 100vh;
+            background: rgba(26, 26, 46, 0.95);
+            border-left: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 10px 0 0 10px;
+            box-shadow: -4px 0 20px rgba(0, 212, 255, 0.2);
+            z-index: 1;
+        }
+        @media (max-width: 768px) {
+            #mainCanvas {
+                width: 100vw;
+                height: 60vh;
+            }
+            #infoCanvas {
+                width: 100vw;
+                height: 40vh;
+                top: 60vh;
+                border-radius: 0;
+                border-left: none;
+                border-top: 1px solid rgba(0, 212, 255, 0.1);
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="particles"></canvas>
+    <canvas id="mainCanvas"></canvas>
+    <canvas id="infoCanvas"></canvas>
+    <svg width="0" height="0">
+        <defs>
+            <linearGradient id="funnelGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#00D4FF;" />
+                <stop offset="100%" style="stop-color:#FF2E63;" />
+            </linearGradient>
+        </defs>
+    </svg>
+    <script src="matter.js"></script>
+    <script>
+        const particlesCanvas = document.getElementById('particles');
+        const particlesCtx = particlesCanvas.getContext('2d');
+        let particlesArray = [];
+
+        function resizeParticlesCanvas() {
+            particlesCanvas.width = window.innerWidth;
+            particlesCanvas.height = window.innerHeight;
+        }
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * particlesCanvas.width;
+                this.y = Math.random() * particlesCanvas.height;
+                this.size = Math.random() * 2 + 1;
+                this.speedX = Math.random() * 0.5 - 0.25;
+                this.speedY = Math.random() * 0.5 - 0.25;
+                this.color = `rgba(${Math.random() * 255}, ${Math.random() * 255}, 255, 0.5)`;
+            }
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                if (this.x < 0 || this.x > particlesCanvas.width) this.speedX *= -1;
+                if (this.y < 0 || this.y > particlesCanvas.height) this.speedY *= -1;
+            }
+            draw() {
+                particlesCtx.fillStyle = this.color;
+                particlesCtx.beginPath();
+                particlesCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                particlesCtx.fill();
+            }
+        }
+
+        function initParticles() {
+            resizeParticlesCanvas();
+            particlesArray = [];
+            for (let i = 0; i < 20; i++) {
+                particlesArray.push(new Particle());
+            }
+        }
+
+        function animateParticles() {
+            particlesCtx.clearRect(0, 0, particlesCanvas.width, particlesCanvas.height);
+            particlesArray.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+            requestAnimationFrame(animateParticles);
+        }
+
+        window.addEventListener('resize', initParticles);
+        initParticles();
+        animateParticles();
+
+        let MAIN_AREA_WIDTH, INFO_PANEL_WIDTH, SCREEN_HEIGHT;
+        let FUNNEL_TOP_Y, FUNNEL_END_WIDTH, FUNNEL_CENTER_X, FUNNEL_OPENING_LEFT, FUNNEL_OPENING_RIGHT;
+        let SCROLL_AREA_HEIGHT, FADE_START_Y, FADE_END_Y;
+
+        const GRAVITY = 50;
+        const ELASTICITY = 1.0;
+        const WALL_THICKNESS = 10;
+        const DESPAWN_TIME = 10;
+        const BALL_SPAWN_VX = -450;
+        const BALL_SPAWN_VX_RANGE = [-200, 100];
+        const MAX_BALLS = 100;
+        const MIN_LINE_SPACING = 20;
+        const MAX_URL_LENGTH = 30;
+
+        const mainCanvas = document.getElementById('mainCanvas');
+        const infoCanvas = document.getElementById('infoCanvas');
+        const mainCtx = mainCanvas.getContext('2d');
+        const infoCtx = infoCanvas.getContext('2d');
+
+        let engine, leftWall, rightWall, leftBarrier;
+
+        let balls = [];
+        let urlPositions = [];
+        let requestTimes = [];
+        let maxSizeSeen = 1000;
+        let maxSizeUrl = "";
+        let seenIds = new Set();
+        let lastTimestamp = 0;
+
+        const colors = [
+            '#00D4FF', '#FF2E63', '#00FF85',
+            '#FFD700', '#FF00FF', '#00FFFF'
+        ];
+
+        function updateDimensions() {
+            MAIN_AREA_WIDTH = window.innerWidth * 0.7;
+            INFO_PANEL_WIDTH = window.innerWidth * 0.3;
+            SCREEN_HEIGHT = window.innerHeight;
+
+            if (window.innerWidth <= 768) {
+                MAIN_AREA_WIDTH = window.innerWidth;
+                INFO_PANEL_WIDTH = window.innerWidth;
+                SCREEN_HEIGHT = window.innerHeight * 0.6;
+                infoCanvas.style.top = `${SCREEN_HEIGHT}px`;
+                infoCanvas.style.height = `${window.innerHeight - SCREEN_HEIGHT}px`;
+            } else {
+                MAIN_AREA_WIDTH = window.innerWidth * 0.7;
+                INFO_PANEL_WIDTH = window.innerWidth * 0.3;
+                SCREEN_HEIGHT = window.innerHeight;
+                infoCanvas.style.top = '0';
+                infoCanvas.style.height = '100vh';
+            }
+
+            mainCanvas.width = MAIN_AREA_WIDTH;
+            mainCanvas.height = SCREEN_HEIGHT;
+            infoCanvas.width = INFO_PANEL_WIDTH;
+            infoCanvas.height = window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT;
+
+            FUNNEL_TOP_Y = SCREEN_HEIGHT * 0.375;
+            FUNNEL_END_WIDTH = MAIN_AREA_WIDTH * 0.176;
+            FUNNEL_CENTER_X = MAIN_AREA_WIDTH / 2;
+            FUNNEL_OPENING_LEFT = FUNNEL_CENTER_X - (FUNNEL_END_WIDTH / 2);
+            FUNNEL_OPENING_RIGHT = FUNNEL_CENTER_X + (FUNNEL_END_WIDTH / 2);
+            SCROLL_AREA_HEIGHT = (window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT) - ((window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT) * 0.125);
+            FADE_START_Y = SCROLL_AREA_HEIGHT - (6 * MIN_LINE_SPACING);
+            FADE_END_Y = SCROLL_AREA_HEIGHT;
+
+            if (engine) {
+                Matter.World.clear(engine.world, false);
+                engine.world.gravity.y = GRAVITY / 60;
+
+                leftBarrier = Matter.Bodies.rectangle(
+                    0,
+                    FUNNEL_TOP_Y / 2,
+                    WALL_THICKNESS,
+                    FUNNEL_TOP_Y,
+                    {
+                        isStatic: true,
+                        restitution: ELASTICITY
+                    }
+                );
+
+                leftWall = Matter.Bodies.rectangle(
+                    (0 + FUNNEL_OPENING_LEFT) / 2,
+                    (FUNNEL_TOP_Y + SCREEN_HEIGHT) / 2,
+                    Math.sqrt(Math.pow(FUNNEL_OPENING_LEFT - 0, 2) + Math.pow(SCREEN_HEIGHT - FUNNEL_TOP_Y, 2)),
+                    WALL_THICKNESS,
+                    {
+                        isStatic: true,
+                        angle: Math.atan2(SCREEN_HEIGHT - FUNNEL_TOP_Y, FUNNEL_OPENING_LEFT - 0),
+                        restitution: ELASTICITY
+                    }
+                );
+                rightWall = Matter.Bodies.rectangle(
+                    (MAIN_AREA_WIDTH + FUNNEL_OPENING_RIGHT) / 2,
+                    (FUNNEL_TOP_Y + SCREEN_HEIGHT) / 2,
+                    Math.sqrt(Math.pow(MAIN_AREA_WIDTH - FUNNEL_OPENING_RIGHT, 2) + Math.pow(SCREEN_HEIGHT - FUNNEL_TOP_Y, 2)),
+                    WALL_THICKNESS,
+                    {
+                        isStatic: true,
+                        angle: Math.atan2(SCREEN_HEIGHT - FUNNEL_TOP_Y, FUNNEL_OPENING_RIGHT - MAIN_AREA_WIDTH),
+                        restitution: ELASTICITY
+                    }
+                );
+                Matter.World.add(engine.world, [leftBarrier, leftWall, rightWall]);
+
+                balls.forEach(ball => Matter.World.add(engine.world, ball));
+            }
+        }
+
+        function formatSize(size) {
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let unitIndex = 0;
+            let convertedSize = parseFloat(size);
+            while (convertedSize >= 1024 && unitIndex < units.length - 1) {
+                convertedSize /= 1024;
+                unitIndex++;
+            }
+            return `${convertedSize.toFixed(1)} ${units[unitIndex]}`;
+        }
+
+        function createBall(logData) {
+            const url = logData.url;
+            const status = logData.status;
+            const size = logData.size;
+            const method = logData.method;
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            const spawnTime = Date.now();
+
+            // Facteur d'échelle : 1.5 sur mobile, 1.0 sinon
+            const scaleFactor = window.innerWidth <= 768 ? 2 : 1.0;
+
+            let radius = 15 * (MAIN_AREA_WIDTH / 850) * scaleFactor;
+            if (method !== 'POST' && method !== 'DELETE' && status !== 404) {
+                const sizeThresholds = [
+                    { threshold: 10000, radius: 15 },
+                    { threshold: 100000, radius: 19 },
+                    { threshold: 200000, radius: 23 },
+                    { threshold: 300000, radius: 27 },
+                    { threshold: 500000, radius: 31 },
+                    { threshold: 1000000, radius: 35 },
+                    { threshold: 2000000, radius: 39 },
+                    { threshold: 3000000, radius: 43 },
+                    { threshold: 5000000, radius: 47 },
+                    { threshold: 10000000, radius: 50 },
+                ];
+                for (const { threshold, radius: r } of sizeThresholds) {
+                    if (size < threshold) {
+                        radius = r * (MAIN_AREA_WIDTH / 850) * scaleFactor;
+                        break;
+                    }
+                }
+                if (size >= 10000000) radius = 50 * (MAIN_AREA_WIDTH / 850) * scaleFactor;
+            }
+
+            let body;
+            const spawnX = MAIN_AREA_WIDTH * 0.976;
+            const spawnY = SCREEN_HEIGHT * 0.0375;
+            if (method === 'POST') {
+                const vertices = [
+                    { x: 0, y: -20 },
+                    { x: 17.32, y: -10 },
+                    { x: 17.32, y: 10 },
+                    { x: 0, y: 20 },
+                    { x: -17.32, y: 10 },
+                    { x: -17.32, y: -10 }
+                ].map(v => ({ x: v.x * (MAIN_AREA_WIDTH / 850) * scaleFactor, y: v.y * (SCREEN_HEIGHT / 800) * scaleFactor }));
+                body = Matter.Bodies.fromVertices(spawnX, spawnY, [vertices], { restitution: ELASTICITY });
+                /*
+                // Exemple de polygone convexe complexe (icosagone à 20 côtés) sans poly-decomp :
+                const sides = 20;
+                const radius = 25 * (MAIN_AREA_WIDTH / 850) * scaleFactor;
+                const vertices = Array.from({ length: sides }, (_, i) => {
+                    const angle = (i / sides) * 2 * Math.PI;
+                    return {
+                        x: radius * Math.cos(angle),
+                        y: radius * Math.sin(angle)
+                    };
+                });
+                body = Matter.Bodies.fromVertices(spawnX, spawnY, [vertices], { restitution: ELASTICITY });
+                */
+            } else if (method === 'DELETE') {
+                const vertices = [
+                    { x: -20, y: -5 },
+                    { x: 20, y: -5 },
+                    { x: 20, y: 5 },
+                    { x: -20, y: 5 }
+                ].map(v => ({ x: v.x * (MAIN_AREA_WIDTH / 850) * scaleFactor, y: v.y * (SCREEN_HEIGHT / 800) * scaleFactor }));
+                body = Matter.Bodies.fromVertices(spawnX, spawnY, [vertices], { restitution: ELASTICITY });
+            } else if (status === 404) {
+                body = Matter.Bodies.rectangle(spawnX, spawnY, 30 * (MAIN_AREA_WIDTH / 850) * scaleFactor, 30 * (SCREEN_HEIGHT / 800) * scaleFactor, { restitution: ELASTICITY });
+            } else {
+                body = Matter.Bodies.circle(spawnX, spawnY, radius, { restitution: ELASTICITY });
+            }
+
+            const vx = BALL_SPAWN_VX + Math.random() * (BALL_SPAWN_VX_RANGE[1] - BALL_SPAWN_VX_RANGE[0]) + BALL_SPAWN_VX_RANGE[0];
+            const vy = Math.random() * 100 - 50;
+            Matter.Body.setVelocity(body, { x: vx / 60, y: vy / 60 });
+
+            body.url = url;
+            body.status = status;
+            body.size = size;
+            body.method = method;
+            body.color = color;
+            body.spawnTime = spawnTime;
+            body.id = logData.id;
+
+            return body;
+        }
+
+        function drawShape(body) {
+            mainCtx.strokeStyle = body.color || 'url(#funnelGradient)';
+            mainCtx.lineWidth = 2;
+            mainCtx.shadowColor = body.color || '#00D4FF';
+            mainCtx.shadowBlur = 10;
+
+            const shape = body.parts[0];
+            if (shape.circleRadius) {
+                mainCtx.beginPath();
+                mainCtx.arc(shape.position.x, shape.position.y, shape.circleRadius, 0, 2 * Math.PI);
+                mainCtx.stroke();
+                mainCtx.save();
+                mainCtx.globalAlpha = 0.3;
+                mainCtx.fillStyle = body.color;
+                mainCtx.fill();
+                mainCtx.restore();
+            } else {
+                mainCtx.beginPath();
+                mainCtx.moveTo(shape.vertices[0].x, shape.vertices[0].y);
+                for (let v of shape.vertices) {
+                    mainCtx.lineTo(v.x, v.y);
+                }
+                mainCtx.closePath();
+                mainCtx.stroke();
+            }
+
+            mainCtx.shadowBlur = 0;
+            if (body.status) {
+                mainCtx.fillStyle = '#FFFFFF';
+                mainCtx.textAlign = 'center';
+                mainCtx.textBaseline = 'middle';
+                mainCtx.font = `${14 * (MAIN_AREA_WIDTH / 850)}px Inter, sans-serif`;
+                mainCtx.fillText(body.status, body.position.x, body.position.y);
+            }
+        }
+
+        function drawFunnel() {
+            mainCtx.strokeStyle = 'url(#funnelGradient)';
+            mainCtx.lineWidth = 6;
+            mainCtx.shadowColor = '#00D4FF';
+            mainCtx.shadowBlur = 15;
+            mainCtx.beginPath();
+            mainCtx.moveTo(0, FUNNEL_TOP_Y);
+            mainCtx.lineTo(FUNNEL_OPENING_LEFT, SCREEN_HEIGHT);
+            mainCtx.stroke();
+            mainCtx.beginPath();
+            mainCtx.moveTo(MAIN_AREA_WIDTH, FUNNEL_TOP_Y);
+            mainCtx.lineTo(FUNNEL_OPENING_RIGHT, SCREEN_HEIGHT);
+            mainCtx.stroke();
+            mainCtx.shadowBlur = 0;
+        }
+
+        function drawInfoPanel() {
+            infoCtx.clearRect(0, 0, INFO_PANEL_WIDTH, infoCanvas.height);
+            infoCtx.font = `${14 * (INFO_PANEL_WIDTH / 350)}px Inter, sans-serif`;
+            infoCtx.fillStyle = '#FFFFFF';
+
+            for (let { url, size, y_pos } of urlPositions) {
+                if (y_pos < SCROLL_AREA_HEIGHT && size) {
+                    let alpha = 1;
+                    if (y_pos >= FADE_START_Y) {
+                        const fadeDistance = FADE_END_Y - FADE_START_Y;
+                        const distanceFromFadeStart = y_pos - FADE_START_Y;
+                        alpha = 1 - (distanceFromFadeStart / fadeDistance);
+                        alpha = Math.max(0, Math.min(1, alpha));
+                    }
+                    infoCtx.globalAlpha = alpha;
+                    const urlDisplay = url.length > MAX_URL_LENGTH ? url.substring(0, MAX_URL_LENGTH) + '...' : url;
+                    infoCtx.textAlign = 'left';
+                    infoCtx.fillStyle = '#00D4FF';
+                    infoCtx.fillText(urlDisplay, 10, y_pos);
+                    const sizeStr = formatSize(size);
+                    infoCtx.textAlign = 'right';
+                    infoCtx.fillStyle = '#FFFFFF';
+                    infoCtx.fillText(sizeStr, INFO_PANEL_WIDTH - 10, y_pos);
+                    infoCtx.globalAlpha = 1;
+                }
+            }
+
+            const currentTime = Date.now() / 1000;
+            const requestsPerMin = requestTimes.filter(t => currentTime - t < 60).length;
+            const requestsPerSec = requestTimes.filter(t => currentTime - t < 1).length;
+            const stats = [
+                `Max Size: ${formatSize(maxSizeSeen)}`,
+                `File: ${maxSizeUrl.substring(0, MAX_URL_LENGTH)}${maxSizeUrl.length > MAX_URL_LENGTH ? '...' : ''}`,
+                `Requests/min: ${requestsPerMin}`,
+                `Requests/sec: ${requestsPerSec}`,
+                `Balls: ${balls.length}`
+            ];
+            let yOffset = (window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT) - 100;
+            for (let stat of stats) {
+                infoCtx.textAlign = 'left';
+                infoCtx.fillStyle = stat.startsWith('Balls:') ? '#FF2E63' : '#FFFFFF';
+                infoCtx.fillText(stat, 10, yOffset);
+                yOffset += 20;
+            }
+        }
+
+        function processLogData(data) {
+            for (let log of data) {
+                if (!seenIds.has(log.id)) {
+                    seenIds.add(log.id);
+                    if (balls.length < MAX_BALLS) {
+                        const ball = createBall(log);
+                        Matter.World.add(engine.world, ball);
+                        balls.push(ball);
+                    }
+                    for (let i = 0; i < urlPositions.length; i++) {
+                        urlPositions[i].y_pos += MIN_LINE_SPACING;
+                    }
+                    urlPositions.push({ url: log.url, size: log.size, y_pos: 20 });
+                    urlPositions = urlPositions.filter(url => url.y_pos < SCROLL_AREA_HEIGHT);
+                    requestTimes.push(log.timestamp);
+                    if (log.size > maxSizeSeen) {
+                        maxSizeSeen = log.size;
+                        maxSizeUrl = log.url;
+                    }
+                    lastTimestamp = Math.max(lastTimestamp, log.timestamp);
+                }
+            }
+        }
+
+        function setupSSE() {
+            const source = new EventSource('sse.php');
+            source.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.error) return;
+                    processLogData(data);
+                } catch (error) {
+                    console.error('SSE parsing error:', error);
+                }
+            };
+            source.onerror = () => {
+                source.close();
+                setTimeout(setupSSE, 5000);
+            };
+        }
+
+        function despawnBalls() {
+            const currentTime = Date.now() / 1000;
+            balls = balls.filter(ball => {
+                const pos = ball.position;
+                if (pos.y > SCREEN_HEIGHT && FUNNEL_OPENING_LEFT <= pos.x && pos.x <= FUNNEL_OPENING_RIGHT) {
+                    Matter.World.remove(engine.world, ball);
+                    return false;
+                }
+                if ((currentTime - ball.spawnTime / 1000) > DESPAWN_TIME) {
+                    Matter.World.remove(engine.world, ball);
+                    return false;
+                }
+                return true;
+            });
+        }
+
+        function render() {
+            mainCtx.clearRect(0, 0, MAIN_AREA_WIDTH, SCREEN_HEIGHT);
+            drawFunnel();
+            for (let body of engine.world.bodies) {
+                if (body.id !== leftWall.id && body.id !== rightWall.id) {
+                    drawShape(body);
+                }
+            }
+            drawInfoPanel();
+        }
+
+        function init() {
+            if (typeof Matter === 'undefined') {
+                console.error('Matter.js not loaded');
+                return;
+            }
+            engine = Matter.Engine.create();
+            updateDimensions();
+            window.addEventListener('resize', updateDimensions);
+            setupSSE();
+            gameLoop();
+        }
+
+        function gameLoop() {
+            Matter.Engine.update(engine, 1000 / 60);
+            despawnBalls();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+
+        init();
+    </script>
+</body>
+</html>
