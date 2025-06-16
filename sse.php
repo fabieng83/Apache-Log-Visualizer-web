@@ -50,7 +50,7 @@ if ($handle === false) {
 
 while (!feof($handle)) {
     $line = fgets($handle);
-    if ($line && strpos($line, '/ball/') === false) { // Ignorer /ball/* (inclut /ball/ball.php et /ball/sse.php)
+    if ($line) {
         $logEntry = parseLogLine($line);
         if ($logEntry) {
             error_log("Sending log: " . json_encode($logEntry)); // Debug
