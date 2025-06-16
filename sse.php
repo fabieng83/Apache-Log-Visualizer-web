@@ -2,10 +2,10 @@
 header('Content-Type: text/event-stream');
 header('Cache-Control: no-cache');
 header('Connection: keep-alive');
-header('X-Accel-Buffering: no'); // Désactiver le buffering pour Nginx, si utilisé
+header('X-Accel-Buffering: no'); // Disable buffering for Nginx, if used
 
-set_time_limit(0); // Pas de timeout
-ob_end_flush(); // Vider le buffer de sortie
+set_time_limit(0); // No timeout
+ob_end_flush(); // Clear output buffer
 flush();
 
 function parseLogLine($line) {
@@ -31,30 +31,43 @@ function parseLogLine($line) {
     return null;
 }
 
-// Surveiller le fichier de log avec tail -f
-$logFile = '/var/log/apache2/other_vhosts_access.log';
-if (!is_readable($logFile)) {
-    error_log("Cannot read $logFile: Permission denied or file does not exist");
-    echo "data: {\"error\": \"Cannot read log file\"}\n\n";
+// Path to the bash script
+$bashScriptPath = 'tail_log.sh'; // Update this to the actual path where tail_log.sh is stored
+if (!is_readable($bashScriptPath)) {
+    error_log("Cannot read $bashScriptPath: Permission denied or file does not exist");
+    echo "data: {\"error\": \"Cannot read bash script\"}\n\n";
     flush();
     exit;
 }
 
-$handle = popen("tail -f $logFile 2>&1", 'r');
+// Ensure the bash script is executable
+chmod($bashScriptPath, 0755);
+
+// Start the bash script with popen
+$command = "bash $bashScriptPath 2>&1";
+$handle = popen($command, 'r');
 if ($handle === false) {
-    error_log("Failed to execute tail -f $logFile");
-    echo "data: {\"error\": \"Failed to tail log file\"}\n\n";
+    error_log("Failed to execute $command");
+    echo "data: {\"error\": \"Failed to execute bash script\"}\n\n";
     flush();
     exit;
 }
 
 while (!feof($handle)) {
     $line = fgets($handle);
-    if ($line && strpos($line, '/ball/') === false) { // Ignorer /ball/* (inclut /ball/ball.php et /ball/sse.php)
+    if ($line) {
+        // Check for error messages from the bash script
+        if (strpos($line, "Error: ") === 0) {
+            error_log($line);
+            echo "data: {\"error\": \"" . trim($line) . "\"}\n\n";
+            pclose($handle);
+            flush();
+            exit;
+        }
         $logEntry = parseLogLine($line);
         if ($logEntry) {
             error_log("Sending log: " . json_encode($logEntry)); // Debug
-            echo "data: " . json_encode([$logEntry]) . "\n\n"; // Envoyer comme tableau pour compatibilité
+            echo "data: " . json_encode([$logEntry]) . "\n\n"; // Send as array for compatibility
             flush();
         }
     }
