@@ -1,5 +1,6 @@
 # Apache-Log-Visualizer-web
 This project provides a Server-Sent Events (SSE) implementation to stream Apache access logs in real-time to a web client for visualization. The backend is written in PHP and monitors an Apache log file, parsing and streaming all log entries to the client.
+<img src="screenshot.png" width="80%" align="center">
 ## Features
 - Real-time streaming of Apache access logs using Server-Sent Events (SSE).
 - Parses log entries to extract meaningful data (e.g., method, URL, status code, size, timestamp).
