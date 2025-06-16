@@ -32,7 +32,7 @@ function parseLogLine($line) {
 }
 
 // Path to the bash script
-$bashScriptPath = 'tail_log.sh'; // Update this to the actual path where tail_log.sh is stored
+$bashScriptPath = 'tail_log.sh'; // Adjust to the actual path
 if (!is_readable($bashScriptPath)) {
     error_log("Cannot read $bashScriptPath: Permission denied or file does not exist");
     echo "data: {\"error\": \"Cannot read bash script\"}\n\n";
@@ -41,7 +41,9 @@ if (!is_readable($bashScriptPath)) {
 }
 
 // Ensure the bash script is executable
-chmod($bashScriptPath, 0755);
+if (!is_executable($bashScriptPath)) {
+    chmod($bashScriptPath, 0755);
+}
 
 // Start the bash script with popen
 $command = "bash $bashScriptPath 2>&1";
