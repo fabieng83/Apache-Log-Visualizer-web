@@ -1,7 +1,7 @@
 #!/bin/bash
 LOG_FILE="/var/log/apache2/other_vhosts_access.log"
-CPU_THRESHOLD=50  # CPU usage threshold in percentage
-CHECK_INTERVAL=10  # Period to check CPU usage (seconds)
+CPU_THRESHOLD=10  # CPU usage threshold in percentage
+CHECK_INTERVAL=2  # Period to check CPU usage (seconds)
 PID=$$  # PID of this bash script
 
 # Check if log file is readable
