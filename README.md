@@ -18,9 +18,8 @@ The `sse.php` script monitors the Apache log file using `tail -f` and parses lin
 - `size`: Response size in bytes.
 - `timestamp`: Unix timestamp of the log entry.
 ## Troubleshooting
-Ensure the Apache log file (`/var/log/apache2/other_vhosts_access.log`) is readable by the PHP process (typically running as the Apache user, e.g., `www-data` on Debian/Ubuntu). Run the following commands:
+- Ensure the Apache log file (`/var/log/apache2/other_vhosts_access.log`) is readable by the PHP process (typically running as the Apache user, e.g., `www-data` on Debian/Ubuntu). Run the following commands:
    ```bash
-   sudo chmod +r /var/log/apache2/other_vhosts_access.log
-   sudo chown :www-data /var/log/apache2/other_vhosts_access.log
-   sudo chmod g+r /var/log/apache2/other_vhosts_access.log
+sudo usermod -a -G adm www-data
    ```
+-
