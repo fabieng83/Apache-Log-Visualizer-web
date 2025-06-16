@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matter.js avec Génération de Balles SSE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1A1A2E;
+            font-family: 'Inter', sans-serif;
+            position: relative;
+        }
+        #mainCanvas {
+            position: absolute;
+            left: 23vw;
+            top: 0;
+            width: 77vw;
+            height: 100vh;
+            z-index: 1;
+        }
+        #infoCanvas {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 23vw;
+            height: 100vh;
+            background: rgba(26, 26, 46, 0.95);
+            border-right: 1px solid rgba(0, 212, 255, 0.1);
+            border-radius: 0 10px 10px 0;
+            box-shadow: 4px 0 20px rgba(0, 212, 255, 0.2);
+            z-index: 1;
+        }
+        @media (max-width: 768px) {
+            #mainCanvas {
+                left: 0;
+                width: 100vw;
+                height: 60vh;
+            }
+            #infoCanvas {
+                width: 100vw;
+                height: 40vh;
+                top: 60vh;
+                left: 0;
+                border-radius: 0;
+                border-right: none;
+                border-top: 1px solid rgba(0, 212, 255, 0.1);
+                box-shadow: 0 -4px 20px rgba(0, 212, 255, 0.2);
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="mainCanvas"></canvas>
+    <canvas id="infoCanvas"></canvas>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script>
+        var Example = Example || {};
+
+        Example.avalanche = function() {
+            var Engine = Matter.Engine,
+                Render = Matter.Render,
+                Runner = Matter.Runner,
+                Composite = Matter.Composite,
+                Common = Matter.Common,
+                MouseConstraint = Matter.MouseConstraint,
+                Mouse = Matter.Mouse,
+                Bodies = Matter.Bodies,
+                Events = Matter.Events;
+
+            // Créer le moteur
+            var engine = Engine.create(),
+                world = engine.world;
+
+            // Créer le rendu
+            var render = Render.create({
+                element: document.body,
+                canvas: document.getElementById('mainCanvas'),
+                engine: engine,
+                options: {
+                    width: window.innerWidth * 0.77,
+                    height: window.innerHeight,
+                    showAngleIndicator: false,
+                    wireframes: false
+                }
+            });
+
+            Render.run(render);
+
+            // Créer le runner
+            var runner = Runner.create();
+            Runner.run(runner, engine);
+
+            // Initialiser le canvas d'information
+            const infoCanvas = document.getElementById('infoCanvas');
+            const infoCtx = infoCanvas.getContext('2d');
+
+            // Variables pour le panneau d'information
+            let MAIN_AREA_WIDTH, INFO_PANEL_WIDTH, SCREEN_HEIGHT;
+            let SCROLL_AREA_HEIGHT, FADE_START_Y, FADE_END_Y;
+            let urlPositions = [];
+            let requestTimes = [];
+            let maxSizeSeen = 0;
+            let maxSizeUrl = "";
+            let seenIds = new Set();
+            let lastTimestamp = 0;
+            const MIN_LINE_SPACING = 20;
+            const MAX_URL_LENGTH = 25;
+
+            function updateDimensions() {
+                MAIN_AREA_WIDTH = window.innerWidth * 0.77;
+                INFO_PANEL_WIDTH = window.innerWidth * 0.23;
+                SCREEN_HEIGHT = window.innerHeight;
+
+                if (window.innerWidth <= 768) {
+                    MAIN_AREA_WIDTH = window.innerWidth;
+                    INFO_PANEL_WIDTH = window.innerWidth;
+                    SCREEN_HEIGHT = window.innerHeight * 0.6;
+                    infoCanvas.style.top = `${SCREEN_HEIGHT}px`;
+                    infoCanvas.style.height = `${window.innerHeight - SCREEN_HEIGHT}px`;
+                } else {
+                    MAIN_AREA_WIDTH = window.innerWidth * 0.77;
+                    INFO_PANEL_WIDTH = window.innerWidth * 0.23;
+                    SCREEN_HEIGHT = window.innerHeight;
+                    infoCanvas.style.top = '0';
+                    infoCanvas.style.height = '100vh';
+                }
+
+                render.canvas.width = MAIN_AREA_WIDTH;
+                render.canvas.height = SCREEN_HEIGHT;
+                render.options.width = MAIN_AREA_WIDTH;
+                render.options.height = SCREEN_HEIGHT;
+                render.bounds.max.x = MAIN_AREA_WIDTH;
+                render.bounds.max.y = SCREEN_HEIGHT;
+
+                infoCanvas.width = INFO_PANEL_WIDTH;
+                infoCanvas.height = window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT;
+
+                SCROLL_AREA_HEIGHT = (window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT) - 100;
+                FADE_START_Y = SCROLL_AREA_HEIGHT - (6 * MIN_LINE_SPACING);
+                FADE_END_Y = SCROLL_AREA_HEIGHT;
+
+                // Ajuster les rampes pour le nouveau MAIN_AREA_WIDTH
+                Composite.clear(world, false);
+                Composite.add(world, [
+                    Bodies.rectangle(MAIN_AREA_WIDTH * 0.25, SCREEN_HEIGHT * 0.25, MAIN_AREA_WIDTH * 0.7, 20, { isStatic: true, angle: Math.PI * 0.06, render: { fillStyle: '#060a19' } }),
+                    Bodies.rectangle(MAIN_AREA_WIDTH * 0.75, SCREEN_HEIGHT * 0.5, MAIN_AREA_WIDTH * 0.7, 20, { isStatic: true, angle: -Math.PI * 0.06, render: { fillStyle: '#060a19' } }),
+                    Bodies.rectangle(MAIN_AREA_WIDTH * 0.5, SCREEN_HEIGHT * 0.9, MAIN_AREA_WIDTH * 0.7, 20, { isStatic: true, angle: Math.PI * 0.04, render: { fillStyle: '#060a19' } })
+                ]);
+            }
+
+            // Ajouter le contrôle par souris
+            var mouse = Mouse.create(render.canvas),
+                mouseConstraint = MouseConstraint.create(engine, {
+                    mouse: mouse,
+                    constraint: {
+                        stiffness: 0.2,
+                        render: { visible: false }
+                    }
+                });
+
+            Composite.add(world, mouseConstraint);
+            render.mouse = mouse;
+
+            // Initialiser les dimensions
+            updateDimensions();
+            Render.lookAt(render, Composite.allBodies(world));
+
+            // Fonction pour générer une couleur hexadécimale aléatoire
+            function randomColor() {
+                const letters = '0123456789ABCDEF';
+                let color = '#';
+                for (let i = 0; i < 6; i++) {
+                    color += letters[Math.floor(Math.random() * 16)];
+                }
+                return color;
+            }
+
+            // Fonction pour formater la taille en B, KB, MB, GB
+            function formatSize(bytes) {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+                return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+            }
+
+            // Fonction pour dessiner le panneau d'information
+            function drawInfoPanel() {
+                infoCtx.clearRect(0, 0, INFO_PANEL_WIDTH, infoCanvas.height);
+                infoCtx.font = `${10 * (INFO_PANEL_WIDTH / 200)}px Inter, sans-serif`; // Police réduite
+                infoCtx.fillStyle = '#FFFFFF';
+
+                // Afficher les URLs et tailles
+                for (let { url, size, y_pos } of urlPositions) {
+                    if (y_pos < SCROLL_AREA_HEIGHT && size) {
+                        let alpha = 1;
+                        if (y_pos >= FADE_START_Y) {
+                            const fadeDistance = FADE_END_Y - FADE_START_Y;
+                            const distanceFromFadeStart = y_pos - FADE_START_Y;
+                            alpha = 1 - (distanceFromFadeStart / fadeDistance);
+                            alpha = Math.max(0, Math.min(1, alpha));
+                        }
+                        infoCtx.globalAlpha = alpha;
+                        const urlDisplay = url.length > MAX_URL_LENGTH ? url.substring(0, MAX_URL_LENGTH) + '...' : url;
+                        infoCtx.textAlign = 'left';
+                        infoCtx.fillStyle = '#00D4FF';
+                        infoCtx.fillText(urlDisplay, 10, y_pos);
+                        const sizeStr = formatSize(size);
+                        infoCtx.textAlign = 'right';
+                        infoCtx.fillStyle = '#FFFFFF';
+                        infoCtx.fillText(sizeStr, INFO_PANEL_WIDTH - 10, y_pos);
+                        infoCtx.globalAlpha = 1;
+                    }
+                }
+
+                // Afficher les statistiques
+                const currentTime = Date.now() / 1000;
+                const requestsPerMin = requestTimes.filter(t => currentTime - t < 60).length;
+                const requestsPerSec = requestTimes.filter(t => currentTime - t < 1).length;
+                const stats = [
+                    `Taille max: ${formatSize(maxSizeSeen)}`,
+                    `URL: ${maxSizeUrl.substring(0, MAX_URL_LENGTH)}${maxSizeUrl.length > MAX_URL_LENGTH ? '...' : ''}`,
+                    `Requêtes/min: ${requestsPerMin}`,
+                    `Requêtes/sec: ${requestsPerSec}`,
+                    `Boules: ${Composite.allBodies(world).filter(body => !body.isStatic).length}`
+                ];
+                let yOffset = (window.innerWidth <= 768 ? window.innerHeight - SCREEN_HEIGHT : SCREEN_HEIGHT) - 100;
+                for (let stat of stats) {
+                    infoCtx.textAlign = 'left';
+                    infoCtx.fillStyle = stat.startsWith('Boules:') ? '#FF2E63' : '#FFFFFF';
+                    infoCtx.fillText(stat, 10, yOffset);
+                    yOffset += 20;
+                }
+            }
+
+            // Fonction pour créer une nouvelle balle
+            function createBall(data) {
+                const size = data.size;
+                let radius;
+
+                // Définir le rayon selon les plages de taille
+                if (size <= 500) {
+                    radius = 15; // 0 à 500 B
+                } else if (size <= 1024) {
+                    radius = 18; // 500 B à 1 KB
+                } else if (size <= 5 * 1024) {
+                    radius = 21; // 1 KB à 5 KB
+                } else if (size <= 10 * 1024) {
+                    radius = 24; // 5 KB à 10 KB
+                } else if (size <= 50 * 1024) {
+                    radius = 27; // 10 KB à 50 KB
+                } else if (size <= 100 * 1024) {
+                    radius = 30; // 50 KB à 100 KB
+                } else if (size <= 300 * 1024) {
+                    radius = 33; // 100 KB à 300 KB
+                } else if (size <= 500 * 1024) {
+                    radius = 36; // 300 KB à 500 KB
+                } else if (size <= 1024 * 1024) {
+                    radius = 39; // 500 KB à 1 MB
+                } else if (size <= 3 * 1024 * 1024) {
+                    radius = 42; // 1 MB à 3 MB
+                } else if (size <= 10 * 1024 * 1024) {
+                    radius = 45; // 3 MB à 10 MB
+                } else {
+                    radius = 50; // + de 10 MB
+                }
+
+                const ball = Bodies.circle(50, 20, radius, {
+                    friction: 0.00001,
+                    restitution: 0.5,
+                    density: 0.001,
+                    render: {
+                        fillStyle: randomColor(),
+                        strokeStyle: '#ffffff',
+                        lineWidth: 2,
+                        text: formatSize(size)
+                    }
+                });
+
+                ball.label = formatSize(size);
+                Composite.add(world, ball);
+
+                // Mettre à jour les données du panneau d'information
+                if (!seenIds.has(data.id)) {
+                    seenIds.add(data.id);
+                    for (let i = 0; i < urlPositions.length; i++) {
+                        urlPositions[i].y_pos += MIN_LINE_SPACING;
+                    }
+                    urlPositions.push({ url: data.url || 'Unknown', size: data.size, y_pos: 20 });
+                    urlPositions = urlPositions.filter(url => url.y_pos < SCROLL_AREA_HEIGHT);
+                    requestTimes.push(data.timestamp);
+                    if (data.size > maxSizeSeen) {
+                        maxSizeSeen = data.size;
+                        maxSizeUrl = data.url || 'Unknown';
+                    }
+                    lastTimestamp = Math.max(lastTimestamp, data.timestamp);
+                }
+            }
+
+            // Connexion SSE
+            let source = null;
+            let reconnectTimeout = null;
+            const maxReconnectAttempts = 5;
+            let reconnectAttempts = 0;
+
+            function connectSSE() {
+                source = new EventSource('https://www.d0wn.com/ball/sse.php');
+                
+                source.onopen = function() {
+                    reconnectAttempts = 0;
+                    if (reconnectTimeout) {
+                        clearTimeout(reconnectTimeout);
+                        reconnectTimeout = null;
+                    }
+                };
+
+                source.onmessage = function(event) {
+                    try {
+                        const jsonData = JSON.parse(event.data)[0];
+                        createBall(jsonData);
+                    } catch (e) {
+                    }
+                };
+
+                source.onerror = function(event) {
+                    source.close();
+
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        reconnectAttempts++;
+                        reconnectTimeout = setTimeout(connectSSE, 5000);
+                    }
+                };
+            }
+
+            connectSSE();
+
+            // Limiter à 200 balles
+            Events.on(engine, 'afterUpdate', function() {
+                const balls = Composite.allBodies(world).filter(body => !body.isStatic);
+                if (balls.length > 200) {
+                    Composite.remove(world, balls[0]);
+                }
+            });
+
+            // Supprimer les boules qui passent en bas de la page
+            Events.on(engine, 'afterUpdate', function() {
+                const balls = Composite.allBodies(world).filter(body => !body.isStatic);
+                balls.forEach(ball => {
+                    if (ball.position.y > SCREEN_HEIGHT) {
+                        Composite.remove(world, ball);
+                    }
+                });
+            });
+
+            // Rendu personnalisé pour afficher le texte sur les boules et le panneau
+            Events.on(render, 'afterRender', function() {
+                const context = render.context;
+                context.font = '10px Arial';
+                context.fillStyle = '#ffffff';
+                context.textAlign = 'center';
+                context.textBaseline = 'middle';
+                
+                const balls = Composite.allBodies(world).filter(body => !body.isStatic);
+                balls.forEach(ball => {
+                    if (ball.label) {
+                        const screenX = (ball.position.x - render.bounds.min.x) * (render.canvas.width / (render.bounds.max.x - render.bounds.min.x));
+                        const screenY = (ball.position.y - render.bounds.min.y) * (render.canvas.height / (render.bounds.max.y - render.bounds.min.y));
+                        context.fillText(ball.label, screenX, screenY);
+                    }
+                });
+
+                // Dessiner le panneau d'information
+                drawInfoPanel();
+            });
+
+            // Gérer le redimensionnement de la fenêtre
+            window.addEventListener('resize', updateDimensions);
+
+            return {
+                engine: engine,
+                runner: runner,
+                render: render,
+                canvas: render.canvas,
+                stop: function() {
+                    Matter.Render.stop(render);
+                    Matter.Runner.stop(runner);
+                    if (source) {
+                        source.close();
+                    }
+                    if (reconnectTimeout) {
+                        clearTimeout(reconnectTimeout);
+                    }
+                }
+            };
+        };
+
+        Example.avalanche();
+    </script>
+</body>
+</html>
